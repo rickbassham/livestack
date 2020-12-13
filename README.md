@@ -18,7 +18,7 @@ nano docker-compose.yml
 ```
 
 Replace `./data/input` with the location your imaging software places new exposures.
-DO NOT change the
+DO NOT change the `:/livestack/input` part of the line.
 Save and exit.
 
 ```
