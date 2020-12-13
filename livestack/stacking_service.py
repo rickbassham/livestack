@@ -322,3 +322,5 @@ class Stacker:
                 logging.error(e)
             finally:
                 self.queue.task_done()
+
+            logging.info(f"{self.queue.qsize()} items remaining")
