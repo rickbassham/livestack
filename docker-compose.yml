@@ -1,0 +1,21 @@
+version: "3"
+services:
+  livestack:
+    image: rickbassham/livestack:latest
+    build:
+      context: .
+    volumes:
+      - ./data/input:/livestack/input
+      - ./data/output:/livestack/output
+      - ./data/storage:/livestack/storage
+    command: [python, main.py]
+    environment:
+      - STORAGE_FOLDER=/livestack/storage
+      - OUTPUT_FOLDER=/livestack/output
+      - INPUT_FOLDER=/livestack/input
+  nginx:
+    image: mohamnag/nginx-file-browser
+    volumes:
+      - ./data:/opt/www/files
+    ports:
+      - "8080:80"
