@@ -15,7 +15,7 @@ import numpy as np
 import png
 from skimage import filters, transform
 from auto_stretch.stretch import Stretch
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageEnhance
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 
 from .utils import Timer
@@ -148,26 +148,58 @@ class Image:
 
     def save_stretched_png(self, folder: str) -> str:
         data = self.data.copy()
+        path = join(folder, f"{self.key}.png")
 
         assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
 
-        data = crop_center(data, data.shape[1] - 128, data.shape[0] - 128)
+        if data.ndim == 2: # mono
+            data = crop_center(data, data.shape[1] - 128, data.shape[0] - 128)
 
-        with Timer("stretch"):
-            data = Stretch().stretch(data)
+            with Timer("stretch"):
+                data = Stretch().stretch(data)
 
-        data = transform.downscale_local_mean(data, (4, 4))
-        data = np.clip(data, 0.0, 1.0)
+            data = transform.downscale_local_mean(data, (4, 4))
+            data = np.clip(data, 0.0, 1.0)
 
-        assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
+            assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
 
-        with Timer(f"saving {self.key}.png"):
-            path = join(folder, f"{self.key}.png")
+            with Timer(f"saving {self.key}.png"):
+                scaled = np.interp(data, (0, 1), (0, 65535)).astype(np.uint16)
 
-            scaled = np.interp(data, (0, 1), (0, 65535)).astype(np.uint16)
+                png_image = PILImage.fromarray(scaled)
+                png_image.save(path)
+        elif data.ndim == 3: # osc
+            channels = []
 
-            png_image = PILImage.fromarray(scaled)
-            png_image.save(path)
+            for i in range(3):
+                channel_data = data[i]
+                channel_data = crop_center(channel_data, channel_data.shape[1] - 128, channel_data.shape[0] - 128)
+
+                with Timer("stretch"):
+                    channel_data = Stretch().stretch(channel_data)
+
+                channel_data = transform.downscale_local_mean(channel_data, (4, 4))
+                channel_data = np.clip(channel_data, 0.0, 1.0)
+
+                assert channel_data.dtype == np.float32 and channel_data.max() <= 1.0 and channel_data.min() >= 0.0, f"{channel_data.dtype} {channel_data.max()} {channel_data.min()}"
+
+                channel_data = np.interp(channel_data, (0.0, 1.0), (0, 255)).astype(np.uint8)
+
+                channels.append(channel_data)
+
+            with Timer(f"saving {self.key}.png"):
+                final = np.dstack(channels)
+
+                assert final.dtype == np.uint8
+
+                png_image = PILImage.fromarray(final, mode="RGB")
+                converter = ImageEnhance.Color(png_image)
+                saturated = converter.enhance(2) # increase color saturation
+                saturated.save(path)
+
+            pass
+        else:
+            raise Exception(f"invalid image dimensions {data.ndim}")
 
         return path
 
@@ -249,29 +281,25 @@ class Stacker:
             # erroring on the same file
             self.db.mark_processed(path)
 
-            if not self.db.stack_exists(img):
-                stacked_path = img.save_fits(self.storage_folder)
-                img.save_stretched_png(self.output_folder)
-            else:
-                if img.image_type == "LIGHT":
-                    img = self._subtract_dark(img)
-                    img = self._divide_flat(img)
+            if img.image_type == "LIGHT":
+                img = self._subtract_dark(img)
+                img = self._divide_flat(img)
 
-                    if img.bayer_pattern:
-                        img = self._debayer(img)
+                if img.bayer_pattern:
+                    img = self._debayer(img)
 
-                    img = self._align(img)
-                    stacked = self._stack(img)
+                img = self._align(img)
+                stacked = self._stack(img)
 
-                    png_path = stacked.save_stretched_png(self.output_folder)
-                    for q in self.output_queues.values():
-                        q.put(png_path)
+                png_path = stacked.save_stretched_png(self.output_folder)
+                for q in self.output_queues.values():
+                    q.put(png_path)
 
-                elif img.image_type == "DARK":
-                    self._stack(img)
-                elif img.image_type == "FLAT":
-                    img = self._subtract_dark(img)
-                    self._stack(img)
+            elif img.image_type == "DARK":
+                self._stack(img)
+            elif img.image_type == "FLAT":
+                img = self._subtract_dark(img)
+                self._stack(img)
 
     def _subtract_dark(self, img: Image) -> Image:
         dark = self.db.get_stacked_image(str(img.dark_key))
@@ -317,6 +345,7 @@ class Stacker:
 
             # fix the image shape
             img.data = np.array([data[:,:,0],data[:,:,1],data[:,:,2]])
+            img.data = np.interp(img.data, (0.0, img.data.max()), (0.0, 1.0)).astype(np.float32)
 
             # poor man's SCNR
             # img.data[1] *= 0.8
