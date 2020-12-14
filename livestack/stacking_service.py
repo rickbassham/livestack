@@ -256,6 +256,10 @@ class Stacker:
                 if img.image_type == "LIGHT":
                     img = self._subtract_dark(img)
                     img = self._divide_flat(img)
+
+                    if img.bayer_pattern:
+                        img = self._debayer(img)
+
                     img = self._align(img)
                     stacked = self._stack(img)
 
@@ -277,6 +281,7 @@ class Stacker:
 
         assert dark.data.dtype == np.float32 and dark.data.min() >= 0.0 and dark.data.max() <= 1.0, f"{dark.data.dtype} {dark.data.max()} {dark.data.min()}"
         assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+        assert dark.data.shape == img.data.shape, f"{dark.data.shape} {img.data.shape}"
 
         with Timer(f"subtracting dark for {img.dark_key}"):
             img.data = img.data - dark.data
@@ -292,6 +297,7 @@ class Stacker:
 
         assert flat.data.dtype == np.float32 and flat.data.min() >= 0.0 and flat.data.max() <= 1.0, f"{flat.data.dtype} {flat.data.max()} {flat.data.min()}"
         assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+        assert flat.data.shape == img.data.shape, f"{flat.data.shape} {img.data.shape}"
 
         with Timer(f"dividing flat for {img.flat_key}"):
             img.data = img.data / (flat.data / flat.data.mean())
@@ -315,9 +321,8 @@ class Stacker:
             # poor man's SCNR
             # img.data[1] *= 0.8
 
-            assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
-
-            return img
+        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+        return img
 
     def _align(self, img: Image) -> Image:
         reference = self.db.get_stacked_image(str(img.key))
@@ -326,17 +331,31 @@ class Stacker:
             logging.info(f"no reference found for {img.key}")
             return img
 
+        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
         assert reference.data.dtype == np.float32 and reference.data.min() >= 0.0 and reference.data.max() <= 1.0, f"{reference.data.dtype} {reference.data.max()} {reference.data.min()}"
+        assert reference.data.ndim == img.data.ndim, f"{reference.data.ndim} {img.data.ndim}"
+        assert reference.data.shape == img.data.shape, f"{reference.data.shape} {img.data.shape}"
 
         with Timer(f"aligning image for {img.key}"):
-            registered, footprint = aa.register(img.data, reference.data, fill_value=0)
-            img.data = registered
+            if img.data.ndim == 2:
+                registered, footprint = aa.register(img.data, reference.data, fill_value=0.0)
+                img.data = registered
+            elif img.data.ndim == 3:
+                transform, _ = aa.find_transform(img.data[0], reference.data[0])
+
+                for i in range(3):
+                    transformed, _ = aa.apply_transform(transform, img.data[i], reference.data[i], fill_value=0.0)
+                    img.data[i] = transformed
+            else:
+                raise Exception(f"invalid image dimensions {img.data.ndim}")
 
         assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
 
         return img
 
     def _stack(self, img: Image) -> Image:
+        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+
         stacked = self.db.get_stacked_image(str(img.key))
 
         if stacked is None:
@@ -344,6 +363,10 @@ class Stacker:
             stacked = img
             stacked.subcount = 0
         else:
+            assert stacked.data.dtype == np.float32 and stacked.data.min() >= 0.0 and stacked.data.max() <= 1.0, f"{stacked.data.dtype} {stacked.data.max()} {stacked.data.min()}"
+            assert stacked.data.ndim == img.data.ndim, f"{stacked.data.ndim} {img.data.ndim}"
+            assert stacked.data.shape == img.data.shape, f"{stacked.data.shape} {img.data.shape}"
+
             with Timer(f"stacking image for {img.key}"):
                 if img.image_type == "LIGHT":
                     data = img.data
