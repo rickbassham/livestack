@@ -16,6 +16,7 @@ import png
 from skimage import filters, transform
 from auto_stretch.stretch import Stretch
 from PIL import Image as PILImage
+from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 
 from .utils import Timer
 
@@ -298,6 +299,26 @@ class Stacker:
 
         return img
 
+    def _debayer(self, img: Image) -> Image:
+        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+
+        if not img.bayer_pattern:
+            logging.warn(f"no bayer pattern detected for {img.key}")
+            return img
+
+        with Timer(f"debayering image for {img.key} with pattern {img.bayer_pattern}"):
+            data = demosaicing_CFA_Bayer_bilinear(img.data, pattern=img.bayer_pattern)
+
+            # fix the image shape
+            img.data = np.array([data[:,:,0],data[:,:,1],data[:,:,2]])
+
+            # poor man's SCNR
+            # img.data[1] *= 0.8
+
+            assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+
+            return img
+
     def _align(self, img: Image) -> Image:
         reference = self.db.get_stacked_image(str(img.key))
 
@@ -308,7 +329,7 @@ class Stacker:
         assert reference.data.dtype == np.float32 and reference.data.min() >= 0.0 and reference.data.max() <= 1.0, f"{reference.data.dtype} {reference.data.max()} {reference.data.min()}"
 
         with Timer(f"aligning image for {img.key}"):
-            registered, footprint = aa.register(img.data, reference, fill_value=0)
+            registered, footprint = aa.register(img.data, reference.data, fill_value=0)
             img.data = registered
 
         assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
