@@ -1,4 +1,5 @@
 import logging
+import math
 import simplejson as json
 import os
 from os.path import join, isfile
@@ -14,6 +15,7 @@ import numpy as np
 import png
 from skimage import filters, transform
 from auto_stretch.stretch import Stretch
+from PIL import Image as PILImage
 
 from .utils import Timer
 
@@ -27,14 +29,17 @@ def crop_center(img, cropx, cropy):
 
 class Image:
     def __init__(self, img: ImageHDU):
-        self.data = img.data
-
-        # dark file subtracted from the image; goes into the HISTORY of the fits
-        self.dark: Optional[str] = None
-
         self.subcount = 1
 
         hdr = img.header
+        bitpix = int(hdr["BITPIX"])
+
+        if bitpix > 0:
+            self.data = np.float32(np.interp(img.data, (0, int(math.pow(2, bitpix)) - 1), (0, 1)))
+        else: # fits stores bitpix as -32 or -64 for floating point data
+            self.data = np.float32(img.data)
+
+        assert self.data.dtype == np.float32 and self.data.max() <= 1.0 and self.data.min() >= 0.0, f"{self.data.dtype} {self.data.max()} {self.data.min()}"
 
         self.camera = hdr["INSTRUME"]
         self.exp = round(float(hdr["EXPTIME"]), 2)
@@ -118,18 +123,13 @@ class Image:
 
         hdr.set("SUBCOUNT", self.subcount)
 
-        if self.dark is not None:
-            hdr.add_history(f"dark {self.dark}")
-
         return hdr
 
-    def set_dark(self, path: str):
-        self.dark = path
 
     def save_fits(self, folder: str) -> str:
-        # ensure we always write 16bit fits files
         data = self.data.copy()
-        data = np.uint16(np.interp(data, (data.min(), data.max()), (0, 65535)))
+
+        assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
 
         hdu = PrimaryHDU(
             data=self.data,
@@ -142,22 +142,25 @@ class Image:
 
     def save_stretched_png(self, folder: str) -> str:
         data = self.data.copy()
-        data = np.uint16(np.interp(data, (data.min(), data.max()), (0, 65535)))
+
+        assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
 
         data = crop_center(data, data.shape[1] - 128, data.shape[0] - 128)
 
         with Timer("stretch"):
             data = Stretch().stretch(data)
 
-        smaller = transform.downscale_local_mean(data, (4, 4))
+        data = transform.downscale_local_mean(data, (4, 4))
+        data = np.clip(data, 0.0, 1.0)
 
-        smaller = np.uint16(
-            np.interp(smaller, (smaller.min(), smaller.max()), (0, 65535))
-        )
+        assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
 
         with Timer(f"saving {self.key}.png"):
             path = join(folder, f"{self.key}.png")
-            png_image = png.from_array(smaller.copy(), "L")
+
+            scaled = np.interp(data, (0, 1), (0, 65535)).astype(np.uint16)
+
+            png_image = PILImage.fromarray(scaled)
             png_image.save(path)
 
         return path
@@ -246,8 +249,8 @@ class Stacker:
             else:
                 if img.image_type == "LIGHT":
                     img = self._subtract_dark(img)
-                    img.data = self._divide_flat(img)
-                    img.data = self._align(img)
+                    img = self._divide_flat(img)
+                    img = self._align(img)
                     stacked = self._stack(img)
 
                     png_path = stacked.save_stretched_png(self.output_folder)
@@ -266,45 +269,72 @@ class Stacker:
             logging.info(f"no dark found for {img.dark_key}")
             return img
 
+        assert dark.data.dtype == np.float32 and dark.data.min() >= 0.0 and dark.data.max() <= 1.0, f"{dark.data.dtype} {dark.data.max()} {dark.data.min()}"
+        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+
         with Timer(f"subtracting dark for {img.dark_key}"):
             img.data = img.data - dark.data
-            img.set_dark(str(img.dark_key))
+            img.data = np.clip(img.data, 0.0, 1.0)
+
         return img
 
-    def _divide_flat(self, img: Image) -> np.array:
+    def _divide_flat(self, img: Image) -> Image:
         flat = self.db.get_stacked_image(str(img.flat_key))
         if flat is None:
             logging.info(f"no flat found for {img.flat_key}")
-            return img.data
+            return img
+
+        assert flat.data.dtype == np.float32 and flat.data.min() >= 0.0 and flat.data.max() <= 1.0, f"{flat.data.dtype} {flat.data.max()} {flat.data.min()}"
+        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
 
         with Timer(f"dividing flat for {img.flat_key}"):
-            return img.data / (flat.data / flat.data.mean())
+            img.data = img.data / (flat.data / flat.data.mean())
+            img.data = np.clip(img.data, 0.0, 1.0)
 
-    def _align(self, img: Image) -> np.array:
+        return img
+
+    def _align(self, img: Image) -> Image:
+        reference = self.db.get_stacked_image(str(img.key))
+
+        if reference is None:
+            logging.info(f"no reference found for {img.key}")
+            return img
+
+        assert reference.data.dtype == np.float32 and reference.data.min() >= 0.0 and reference.data.max() <= 1.0, f"{reference.data.dtype} {reference.data.max()} {reference.data.min()}"
+
         with Timer(f"aligning image for {img.key}"):
-            reference = self.db.get_stacked_image(str(img.key))
             registered, footprint = aa.register(img.data, reference, fill_value=0)
-            return registered
+            img.data = registered
 
-    def _stack(self, img: Image):
-        with Timer(f"stacking image for {img.key}"):
-            stacked = self.db.get_stacked_image(str(img.key))
+        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
 
-            if stacked is None:
-                raise Exception("expected a stack")
+        return img
 
-            if img.image_type == "LIGHT":
-                data = img.data
-            else:
-                data = filters.gaussian(img.data)
+    def _stack(self, img: Image) -> Image:
+        stacked = self.db.get_stacked_image(str(img.key))
 
-            count = stacked.subcount
+        if stacked is None:
+            logging.info(f"no reference found for {img.key}")
+            stacked = img
+            stacked.subcount = 0
+        else:
+            with Timer(f"stacking image for {img.key}"):
+                if img.image_type == "LIGHT":
+                    data = img.data
+                else:
+                    data = filters.gaussian(img.data)
 
-            stacked.data = (count * stacked.data + data) / (count + 1)
+                assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+
+                count = stacked.subcount
+
+                stacked.data = (count * stacked.data + data) / (count + 1)
+
+        assert stacked.data.dtype == np.float32 and stacked.data.min() >= 0.0 and stacked.data.max() <= 1.0, f"{stacked.data.dtype} {stacked.data.max()} {stacked.data.min()}"
 
         stacked.subcount += 1
 
-        with Timer(f"saving stacked fits for {img.key}"):
+        with Timer(f"saving stacked fits for {stacked.key}"):
             stacked.save_fits(self.storage_folder)
 
         return stacked
@@ -320,6 +350,7 @@ class Stacker:
                 self._process_item(item)
             except Exception as e:
                 logging.error(e)
+                raise
             finally:
                 self.queue.task_done()
 

@@ -22,6 +22,8 @@ ccdproc = "*"
 auto-stretch = "*"
 asyncio = "*"
 websockets = "*"
+colour-demosaicing = "*"
+pillow = "*"
 
 [requires]
 python_version = "3.8"
