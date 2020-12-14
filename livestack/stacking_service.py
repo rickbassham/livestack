@@ -41,6 +41,8 @@ class Image:
 
         assert self.data.dtype == np.float32 and self.data.max() <= 1.0 and self.data.min() >= 0.0, f"{self.data.dtype} {self.data.max()} {self.data.min()}"
 
+        self.bayer_pattern = hdr.get("BAYERPAT", None)
+
         self.camera = hdr["INSTRUME"]
         self.exp = round(float(hdr["EXPTIME"]), 2)
         self.gain = hdr["GAIN"]
@@ -54,7 +56,7 @@ class Image:
         if str(image_type).lower().find("light") >= 0:
             self.image_type = "LIGHT"
             self.target = hdr["OBJECT"]
-            self.filter = hdr["FILTER"]
+            self.filter = hdr.get("FILTER", "NONE")
 
         elif str(image_type).lower().find("dark") >= 0:
             self.image_type = "DARK"
@@ -63,7 +65,7 @@ class Image:
 
         elif str(image_type).lower().find("flat") >= 0:
             self.image_type = "FLAT"
-            self.filter = hdr["FILTER"]
+            self.filter = hdr.get("FILTER", "NONE")
             self.target = None
 
     def __iter__(self):
@@ -77,6 +79,9 @@ class Image:
         yield "key", self.key
         yield "dark_key", self.dark_key
         yield "flat_key", self.flat_key
+
+        if self.bayer_pattern:
+            yield "bayer_pattern", self.bayer_pattern
 
     @property
     def key(self) -> Optional[str]:
