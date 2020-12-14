@@ -13,7 +13,7 @@ from astropy.io import fits
 from astropy.io.fits import ImageHDU, HDUList, Header, Card, PrimaryHDU
 import numpy as np
 import png
-from skimage import filters, transform
+from skimage import filters, transform, exposure
 from auto_stretch.stretch import Stretch
 from PIL import Image as PILImage, ImageEnhance
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
@@ -183,12 +183,16 @@ class Image:
 
                 assert channel_data.dtype == np.float32 and channel_data.max() <= 1.0 and channel_data.min() >= 0.0, f"{channel_data.dtype} {channel_data.max()} {channel_data.min()}"
 
-                channel_data = np.interp(channel_data, (0.0, 1.0), (0, 255)).astype(np.uint8)
+                # channel_data = np.interp(channel_data, (0.0, 1.0), (0, 255)).astype(np.uint8)
 
                 channels.append(channel_data)
 
+            final = np.dstack(channels)
+            final = exposure.equalize_adapthist(final, clip_limit=0.0001, nbins=1024)
+
+            final = np.interp(final, (0.0, 1.0), (0, 255)).astype(np.uint8)
+
             with Timer(f"saving {self.key}.png"):
-                final = np.dstack(channels)
 
                 assert final.dtype == np.uint8
 
