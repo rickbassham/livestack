@@ -2,7 +2,7 @@
   "tagFormat": "v${version}",
   "dryRun": true,
   "ci": false,
-  "branches": "main",
+  "branches": "master",
   "plugins": [
     [
       "@semantic-release/commit-analyzer",
