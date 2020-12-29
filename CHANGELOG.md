@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/rickbassham/livestack/compare/v1.0.0...v1.0.1) (2020-12-29)
+
+
+### Bug Fixes
+
+* fix arm builds ([7caf524](https://github.com/rickbassham/livestack/commit/7caf52487a9609161df7b23a7a59488c88609041))
+
 # 1.0.0 (2020-12-25)
 
 
