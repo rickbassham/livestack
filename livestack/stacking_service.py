@@ -69,6 +69,9 @@ class Image:
             self.filter = hdr.get("FILTER", "NONE")
             self.target = None
 
+        else:
+            self.image_type = "UNKNOWN"
+
     def __iter__(self):
         yield "camera", self.camera
         yield "exp", self.exp
@@ -304,6 +307,8 @@ class Stacker:
             elif img.image_type == "FLAT":
                 img = self._subtract_dark(img)
                 self._stack(img)
+            else:
+                logging.info("skipping file with unknown IMAGETYP header")
 
     def _subtract_dark(self, img: Image) -> Image:
         dark = self.db.get_stacked_image(str(img.dark_key))
