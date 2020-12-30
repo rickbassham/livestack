@@ -99,7 +99,7 @@ async def stacker(s: Stacker):
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "--analyze":
+    if len(sys.argv) > 1 and sys.argv[1] == "--analyze":
         analyze_files(os.environ["INPUT_FOLDER"])
     else:
         s = Stacker(
