@@ -1,7 +1,7 @@
 ---
 name: livestack results
 about: Show the community the results of a livestack
-title: ''
+title: "[RESULTS] - "
 labels: ''
 assignees: ''
 
