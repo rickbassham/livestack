@@ -24,6 +24,7 @@ asyncio = "==3.4.3"
 websockets = "==8.1"
 colour-demosaicing = "==0.1.6"
 pillow = "==8.0.1"
+colour = {git = "https://github.com/colour-science/colour"}
 
 [requires]
 python_version = "3.8"
