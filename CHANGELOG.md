@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/rickbassham/livestack/compare/v1.0.1...v1.0.2) (2021-08-29)
+
+
+### Bug Fixes
+
+* handle fits files without gain ([f037e2b](https://github.com/rickbassham/livestack/commit/f037e2b40784f365849c9f1d540c07b6233d680a))
+
 ## [1.0.1](https://github.com/rickbassham/livestack/compare/v1.0.0...v1.0.1) (2020-12-29)
 
 
