@@ -46,7 +46,7 @@ class Image:
 
         self.camera = hdr["INSTRUME"]
         self.exp = round(float(hdr["EXPTIME"]), 2)
-        self.gain = hdr["GAIN"]
+        self.gain = hdr.get("GAIN", 0)
         # round temp to the nearest 5 degrees
         self.temp = 5 * round(float(hdr["CCD-TEMP"]) / 5)
 
