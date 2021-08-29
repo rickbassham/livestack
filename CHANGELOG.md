@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/rickbassham/livestack/compare/v1.0.2...v1.0.3) (2021-08-29)
+
+
+### Bug Fixes
+
+* update docker builds ([3a3e7df](https://github.com/rickbassham/livestack/commit/3a3e7dfd4bb0cb0139d7d435c17264b637eddc54))
+
 ## [1.0.2](https://github.com/rickbassham/livestack/compare/v1.0.1...v1.0.2) (2021-08-29)
 
 
