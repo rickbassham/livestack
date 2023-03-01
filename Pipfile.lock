@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "eb4ca967175561b18288cdc1fe4181a55f1d239673744f9cf843f8dcfb774c57"
+            "sha256": "4e3a82fe817fc4e2a0bdf0c5c5451b181cea206b80e83328931114437f7d82ed"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -118,6 +118,10 @@
             ],
             "markers": "python_version >= '3.6'",
             "version": "==8.0.1"
+        },
+        "colour": {
+            "git": "https://github.com/colour-science/colour",
+            "ref": "74a6cc01f514fc557cf026970cf9d91b2518d717"
         },
         "colour-demosaicing": {
             "hashes": [

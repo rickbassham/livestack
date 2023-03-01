@@ -1,4 +1,4 @@
-version: "3"
+version: "3.9"
 services:
   livestack:
     image: rickbassham/livestack:latest
@@ -13,9 +13,11 @@ services:
       - STORAGE_FOLDER=/livestack/storage
       - OUTPUT_FOLDER=/livestack/output
       - INPUT_FOLDER=/livestack/input
+      - DEBUG=0
   nginx:
-    image: mohamnag/nginx-file-browser
+    image: nginx
     volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./data:/opt/www/files
     ports:
       - "8080:80"

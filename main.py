@@ -13,6 +13,7 @@ import asyncio
 import websockets
 import png
 
+from livestack.analyze import analyze_files
 from livestack.watcher import Watcher
 from livestack.stacking_service import Stacker
 from livestack.utils import GracefulSignalHandler
@@ -98,14 +99,17 @@ async def stacker(s: Stacker):
 
 
 if __name__ == "__main__":
-    s = Stacker(
-        os.environ["STORAGE_FOLDER"],
-        os.environ["OUTPUT_FOLDER"],
-    )
+    if len(sys.argv) > 1 and sys.argv[1] == "--analyze":
+        analyze_files(os.environ["INPUT_FOLDER"])
+    else:
+        s = Stacker(
+            os.environ["STORAGE_FOLDER"],
+            os.environ["OUTPUT_FOLDER"],
+        )
 
-    bound_handler = functools.partial(server, stacker=s)
-    start_server = websockets.serve(bound_handler, "0.0.0.0", 5678)
-    asyncio.get_event_loop().run_until_complete(start_server)
+        bound_handler = functools.partial(server, stacker=s)
+        start_server = websockets.serve(bound_handler, "0.0.0.0", 5678)
+        asyncio.get_event_loop().run_until_complete(start_server)
 
-    asyncio.ensure_future(stacker(s))
-    asyncio.get_event_loop().run_forever()
+        asyncio.ensure_future(stacker(s))
+        asyncio.get_event_loop().run_forever()

@@ -20,6 +20,8 @@ from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 
 from .utils import Timer
 
+DEBUG = os.getenv("DEBUG", "") == "1"
+
 
 def crop_center(img, cropx, cropy):
     y, x = img.shape
@@ -36,11 +38,18 @@ class Image:
         bitpix = int(hdr["BITPIX"])
 
         if bitpix > 0:
-            self.data = np.float32(np.interp(img.data, (0, int(math.pow(2, bitpix)) - 1), (0, 1)))
-        else: # fits stores bitpix as -32 or -64 for floating point data
+            self.data = np.float32(
+                np.interp(img.data, (0, int(math.pow(2, bitpix)) - 1), (0, 1))
+            )
+        else:  # fits stores bitpix as -32 or -64 for floating point data
             self.data = np.float32(img.data)
 
-        assert self.data.dtype == np.float32 and self.data.max() <= 1.0 and self.data.min() >= 0.0, f"{self.data.dtype} {self.data.max()} {self.data.min()}"
+        if DEBUG:
+            assert (
+                self.data.dtype == np.float32
+                and self.data.max() <= 1.0
+                and self.data.min() >= 0.0
+            ), f"{self.data.dtype} {self.data.max()} {self.data.min()}"
 
         self.bayer_pattern = hdr.get("BAYERPAT", None)
 
@@ -68,6 +77,9 @@ class Image:
             self.image_type = "FLAT"
             self.filter = hdr.get("FILTER", "NONE")
             self.target = None
+
+        else:
+            self.image_type = "UNKNOWN"
 
     def __iter__(self):
         yield "camera", self.camera
@@ -131,11 +143,13 @@ class Image:
 
         return hdr
 
-
     def save_fits(self, folder: str) -> str:
         data = self.data.copy()
 
-        assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
+        if DEBUG:
+            assert (
+                data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0
+            ), f"{data.dtype} {data.max()} {data.min()}"
 
         hdu = PrimaryHDU(
             data=self.data,
@@ -150,9 +164,12 @@ class Image:
         data = self.data.copy()
         path = join(folder, f"{self.key}.png")
 
-        assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
+        if DEBUG:
+            assert (
+                data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0
+            ), f"{data.dtype} {data.max()} {data.min()}"
 
-        if data.ndim == 2: # mono
+        if data.ndim == 2:  # mono
             data = crop_center(data, data.shape[1] - 128, data.shape[0] - 128)
 
             with Timer("stretch"):
@@ -161,19 +178,26 @@ class Image:
             data = transform.downscale_local_mean(data, (4, 4))
             data = np.clip(data, 0.0, 1.0)
 
-            assert data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0, f"{data.dtype} {data.max()} {data.min()}"
+            if DEBUG:
+                assert (
+                    data.dtype == np.float32 and data.max() <= 1.0 and data.min() >= 0.0
+                ), f"{data.dtype} {data.max()} {data.min()}"
 
             with Timer(f"saving {self.key}.png"):
                 scaled = np.interp(data, (0, 1), (0, 65535)).astype(np.uint16)
 
                 png_image = PILImage.fromarray(scaled)
                 png_image.save(path)
-        elif data.ndim == 3: # osc
+        elif data.ndim == 3:  # osc
             channels = []
 
             for i in range(3):
                 channel_data = data[i]
-                channel_data = crop_center(channel_data, channel_data.shape[1] - 128, channel_data.shape[0] - 128)
+                channel_data = crop_center(
+                    channel_data,
+                    channel_data.shape[1] - 128,
+                    channel_data.shape[0] - 128,
+                )
 
                 with Timer("stretch"):
                     channel_data = Stretch().stretch(channel_data)
@@ -181,7 +205,12 @@ class Image:
                 channel_data = transform.downscale_local_mean(channel_data, (4, 4))
                 channel_data = np.clip(channel_data, 0.0, 1.0)
 
-                assert channel_data.dtype == np.float32 and channel_data.max() <= 1.0 and channel_data.min() >= 0.0, f"{channel_data.dtype} {channel_data.max()} {channel_data.min()}"
+                if DEBUG:
+                    assert (
+                        channel_data.dtype == np.float32
+                        and channel_data.max() <= 1.0
+                        and channel_data.min() >= 0.0
+                    ), f"{channel_data.dtype} {channel_data.max()} {channel_data.min()}"
 
                 # channel_data = np.interp(channel_data, (0.0, 1.0), (0, 255)).astype(np.uint8)
 
@@ -193,12 +222,12 @@ class Image:
             final = np.interp(final, (0.0, 1.0), (0, 255)).astype(np.uint8)
 
             with Timer(f"saving {self.key}.png"):
-
-                assert final.dtype == np.uint8
+                if DEBUG:
+                    assert final.dtype == np.uint8
 
                 png_image = PILImage.fromarray(final, mode="RGB")
                 converter = ImageEnhance.Color(png_image)
-                saturated = converter.enhance(2) # increase color saturation
+                saturated = converter.enhance(1.6)  # increase color saturation
                 saturated.save(path)
 
             pass
@@ -304,6 +333,8 @@ class Stacker:
             elif img.image_type == "FLAT":
                 img = self._subtract_dark(img)
                 self._stack(img)
+            else:
+                logging.info("skipping file with unknown IMAGETYP header")
 
     def _subtract_dark(self, img: Image) -> Image:
         dark = self.db.get_stacked_image(str(img.dark_key))
@@ -311,9 +342,20 @@ class Stacker:
             logging.info(f"no dark found for {img.dark_key}")
             return img
 
-        assert dark.data.dtype == np.float32 and dark.data.min() >= 0.0 and dark.data.max() <= 1.0, f"{dark.data.dtype} {dark.data.max()} {dark.data.min()}"
-        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
-        assert dark.data.shape == img.data.shape, f"{dark.data.shape} {img.data.shape}"
+        if DEBUG:
+            assert (
+                dark.data.dtype == np.float32
+                and dark.data.min() >= 0.0
+                and dark.data.max() <= 1.0
+            ), f"{dark.data.dtype} {dark.data.max()} {dark.data.min()}"
+            assert (
+                img.data.dtype == np.float32
+                and img.data.min() >= 0.0
+                and img.data.max() <= 1.0
+            ), f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+            assert (
+                dark.data.shape == img.data.shape
+            ), f"{dark.data.shape} {img.data.shape}"
 
         with Timer(f"subtracting dark for {img.dark_key}"):
             img.data = img.data - dark.data
@@ -327,9 +369,20 @@ class Stacker:
             logging.info(f"no flat found for {img.flat_key}")
             return img
 
-        assert flat.data.dtype == np.float32 and flat.data.min() >= 0.0 and flat.data.max() <= 1.0, f"{flat.data.dtype} {flat.data.max()} {flat.data.min()}"
-        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
-        assert flat.data.shape == img.data.shape, f"{flat.data.shape} {img.data.shape}"
+        if DEBUG:
+            assert (
+                flat.data.dtype == np.float32
+                and flat.data.min() >= 0.0
+                and flat.data.max() <= 1.0
+            ), f"{flat.data.dtype} {flat.data.max()} {flat.data.min()}"
+            assert (
+                img.data.dtype == np.float32
+                and img.data.min() >= 0.0
+                and img.data.max() <= 1.0
+            ), f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+            assert (
+                flat.data.shape == img.data.shape
+            ), f"{flat.data.shape} {img.data.shape}"
 
         with Timer(f"dividing flat for {img.flat_key}"):
             img.data = img.data / (flat.data / flat.data.mean())
@@ -338,7 +391,12 @@ class Stacker:
         return img
 
     def _debayer(self, img: Image) -> Image:
-        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+        if DEBUG:
+            assert (
+                img.data.dtype == np.float32
+                and img.data.min() >= 0.0
+                and img.data.max() <= 1.0
+            ), f"{img.data.dtype} {img.data.max()} {img.data.min()}"
 
         if not img.bayer_pattern:
             logging.warn(f"no bayer pattern detected for {img.key}")
@@ -348,13 +406,21 @@ class Stacker:
             data = demosaicing_CFA_Bayer_bilinear(img.data, pattern=img.bayer_pattern)
 
             # fix the image shape
-            img.data = np.array([data[:,:,0],data[:,:,1],data[:,:,2]])
-            img.data = np.interp(img.data, (0.0, img.data.max()), (0.0, 1.0)).astype(np.float32)
+            img.data = np.array([data[:, :, 0], data[:, :, 1], data[:, :, 2]])
+            img.data = np.interp(img.data, (0.0, img.data.max()), (0.0, 1.0)).astype(
+                np.float32
+            )
 
             # poor man's SCNR
             # img.data[1] *= 0.8
 
-        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+        if DEBUG:
+            assert (
+                img.data.dtype == np.float32
+                and img.data.min() >= 0.0
+                and img.data.max() <= 1.0
+            ), f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+
         return img
 
     def _align(self, img: Image) -> Image:
@@ -364,30 +430,57 @@ class Stacker:
             logging.info(f"no reference found for {img.key}")
             return img
 
-        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
-        assert reference.data.dtype == np.float32 and reference.data.min() >= 0.0 and reference.data.max() <= 1.0, f"{reference.data.dtype} {reference.data.max()} {reference.data.min()}"
-        assert reference.data.ndim == img.data.ndim, f"{reference.data.ndim} {img.data.ndim}"
-        assert reference.data.shape == img.data.shape, f"{reference.data.shape} {img.data.shape}"
+        if DEBUG:
+            assert (
+                img.data.dtype == np.float32
+                and img.data.min() >= 0.0
+                and img.data.max() <= 1.0
+            ), f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+            assert (
+                reference.data.dtype == np.float32
+                and reference.data.min() >= 0.0
+                and reference.data.max() <= 1.0
+            ), f"{reference.data.dtype} {reference.data.max()} {reference.data.min()}"
+            assert (
+                reference.data.ndim == img.data.ndim
+            ), f"{reference.data.ndim} {img.data.ndim}"
+            assert (
+                reference.data.shape == img.data.shape
+            ), f"{reference.data.shape} {img.data.shape}"
 
         with Timer(f"aligning image for {img.key}"):
             if img.data.ndim == 2:
-                registered, footprint = aa.register(img.data, reference.data, fill_value=0.0)
+                registered, footprint = aa.register(
+                    img.data, reference.data, fill_value=0.0
+                )
                 img.data = registered
             elif img.data.ndim == 3:
                 transform, _ = aa.find_transform(img.data[0], reference.data[0])
 
                 for i in range(3):
-                    transformed, _ = aa.apply_transform(transform, img.data[i], reference.data[i], fill_value=0.0)
+                    transformed, _ = aa.apply_transform(
+                        transform, img.data[i], reference.data[i], fill_value=0.0
+                    )
                     img.data[i] = transformed
             else:
                 raise Exception(f"invalid image dimensions {img.data.ndim}")
 
-        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+        if DEBUG:
+            assert (
+                img.data.dtype == np.float32
+                and img.data.min() >= 0.0
+                and img.data.max() <= 1.0
+            ), f"{img.data.dtype} {img.data.max()} {img.data.min()}"
 
         return img
 
     def _stack(self, img: Image) -> Image:
-        assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+        if DEBUG:
+            assert (
+                img.data.dtype == np.float32
+                and img.data.min() >= 0.0
+                and img.data.max() <= 1.0
+            ), f"{img.data.dtype} {img.data.max()} {img.data.min()}"
 
         stacked = self.db.get_stacked_image(str(img.key))
 
@@ -396,9 +489,18 @@ class Stacker:
             stacked = img
             stacked.subcount = 0
         else:
-            assert stacked.data.dtype == np.float32 and stacked.data.min() >= 0.0 and stacked.data.max() <= 1.0, f"{stacked.data.dtype} {stacked.data.max()} {stacked.data.min()}"
-            assert stacked.data.ndim == img.data.ndim, f"{stacked.data.ndim} {img.data.ndim}"
-            assert stacked.data.shape == img.data.shape, f"{stacked.data.shape} {img.data.shape}"
+            if DEBUG:
+                assert (
+                    stacked.data.dtype == np.float32
+                    and stacked.data.min() >= 0.0
+                    and stacked.data.max() <= 1.0
+                ), f"{stacked.data.dtype} {stacked.data.max()} {stacked.data.min()}"
+                assert (
+                    stacked.data.ndim == img.data.ndim
+                ), f"{stacked.data.ndim} {img.data.ndim}"
+                assert (
+                    stacked.data.shape == img.data.shape
+                ), f"{stacked.data.shape} {img.data.shape}"
 
             with Timer(f"stacking image for {img.key}"):
                 if img.image_type == "LIGHT":
@@ -406,13 +508,23 @@ class Stacker:
                 else:
                     data = filters.gaussian(img.data)
 
-                assert img.data.dtype == np.float32 and img.data.min() >= 0.0 and img.data.max() <= 1.0, f"{img.data.dtype} {img.data.max()} {img.data.min()}"
+                if DEBUG:
+                    assert (
+                        img.data.dtype == np.float32
+                        and img.data.min() >= 0.0
+                        and img.data.max() <= 1.0
+                    ), f"{img.data.dtype} {img.data.max()} {img.data.min()}"
 
                 count = stacked.subcount
 
                 stacked.data = (count * stacked.data + data) / (count + 1)
 
-        assert stacked.data.dtype == np.float32 and stacked.data.min() >= 0.0 and stacked.data.max() <= 1.0, f"{stacked.data.dtype} {stacked.data.max()} {stacked.data.min()}"
+        if DEBUG:
+            assert (
+                stacked.data.dtype == np.float32
+                and stacked.data.min() >= 0.0
+                and stacked.data.max() <= 1.0
+            ), f"{stacked.data.dtype} {stacked.data.max()} {stacked.data.min()}"
 
         stacked.subcount += 1
 
